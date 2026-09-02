@@ -1,4 +1,6 @@
 from pathlib import Path
+import hashlib
+import json
 
 from langchain_community.document_loaders import TextLoader
 from langchain_ollama import OllamaEmbeddings
@@ -20,9 +22,10 @@ class RagEngine:
 
     def _storage_is_fresh(self, data_dir: Path):
         index_file = STORAGE_DIR / "index.faiss"
-        files = list(data_dir.glob("**/*"))
-        sources = [file for file in files if file.is_file()]
-        return index_file.exists() and all(file.stat().st_mtime <= index_file.stat().st_mtime for file in sources)
+        manifest_file = STORAGE_DIR / "manifest.json"
+        if not index_file.exists() or not manifest_file.exists():
+            return False
+        return self._manifest(data_dir) == json.loads(manifest_file.read_text())
 
     def _build(self, data_dir: Path):
         documents = [TextLoader(str(file), encoding="utf-8").load()[0] for file in data_dir.glob("**/*.txt")]
@@ -30,7 +33,24 @@ class RagEngine:
         index = FAISS.from_documents(chunks, self.embeddings)
         STORAGE_DIR.mkdir(exist_ok=True)
         index.save_local(str(STORAGE_DIR))
+        manifest = self._manifest(data_dir)
+        (STORAGE_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2))
         return index
+
+    def _manifest(self, data_dir: Path):
+        files = sorted(file for file in data_dir.glob("**/*.txt") if file.is_file())
+        return [self._file_record(file, data_dir) for file in files]
+
+    def _file_record(self, file: Path, data_dir: Path):
+        stat = file.stat()
+        return {"path": str(file.relative_to(data_dir)), "size": stat.st_size, "mtime": stat.st_mtime, "hash": self._file_hash(file)}
+
+    def _file_hash(self, file: Path):
+        digest = hashlib.sha256()
+        with file.open("rb") as source:
+            for block in iter(lambda: source.read(65536), b""):
+                digest.update(block)
+        return digest.hexdigest()
 
     def search(self, query: str, top_k: int):
         return self.index.similarity_search_with_score(query, k=top_k)

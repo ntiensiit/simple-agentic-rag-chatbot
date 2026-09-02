@@ -16,7 +16,7 @@ ollama pull llama3.2
 ollama pull nomic-embed-text
 ```
 
-Add `.txt`, `.md`, or other readable files to `data`, then run:
+Add `.txt` files to `data`, then run:
 
 ```powershell
 python main.py
